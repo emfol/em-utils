@@ -3,7 +3,7 @@ BINARIES := bin/bcs bin/starts_with
 
 $(shell test ! -e ./bin && mkdir -p bin)
 
-.PHONY: clean
+.PHONY: clean test
 
 all: $(BINARIES)
 
@@ -12,6 +12,9 @@ bin/bcs: src/bcs.c
 
 bin/starts_with: src/starts_with.c
 	cc $(CFLAGS) -o $@ $<
+
+test: $(BINARIES)
+	./test
 
 clean:
 	rm -rf $(BINARIES)

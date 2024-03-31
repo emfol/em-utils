@@ -5,8 +5,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define DEFAULT_BLOCK_SIZE (4096L)
 #define IEC_BUFFER_SIZE (32)
+#define DEFAULT_BLOCK_SIZE (4096L)
 #define DEFAULT_MAX_CHUNK_SIZE (DEFAULT_BLOCK_SIZE * 1024L)
 
 struct options {
@@ -30,12 +30,14 @@ static int get_IEC_representation(long int value, char *buffer, int limit)
     { "B", 0x1L }
   };
   struct IEC_unit *unit = NULL;
+  double result;
   int i;
   for (i = 0; i < sizeof IEC_units / sizeof (struct IEC_unit); ++i) {
     unit = IEC_units + i;
     if (value >= unit->value) break;
   }
-  return snprintf(buffer, (size_t)limit, "%.2f %s", ((double)value / (double)unit->value), unit->unit);
+  result = (double)value / (double)unit->value;
+  return snprintf(buffer, (size_t)limit, "%.2f %s", result, unit->unit);
 }
 
 static long int get_file_size(const char *file_path)
@@ -127,14 +129,55 @@ static int get_options(int argc, char *const *argv, struct options *options)
   return 1;
 }
 
-int main(int argc, char *const *argv)
+static void print_details(
+  long int file_size,
+  long int block_size,
+  long int max_chunk_size,
+  long int best_chunk_size
+)
 {
-  long int file_size, best_chunk_size;
-  struct options options;
+  long int blocks_per_chunk, chunks_in_file;
   char file_size_iec[IEC_BUFFER_SIZE],
        best_chunk_size_iec[IEC_BUFFER_SIZE],
        block_size_iec[IEC_BUFFER_SIZE],
        max_chunk_size_iec[IEC_BUFFER_SIZE];
+
+  /* Calculare values which will be printed. */
+  blocks_per_chunk = best_chunk_size / block_size;
+  chunks_in_file = file_size / best_chunk_size;
+
+  /* Build IEC string representation of values. */
+  get_IEC_representation(file_size, file_size_iec, IEC_BUFFER_SIZE);
+  get_IEC_representation(block_size, block_size_iec, IEC_BUFFER_SIZE);
+  get_IEC_representation(max_chunk_size, max_chunk_size_iec, IEC_BUFFER_SIZE);
+  get_IEC_representation(best_chunk_size, best_chunk_size_iec, IEC_BUFFER_SIZE);
+
+  fprintf(
+    stderr,
+    " > Details:\n"
+    " - File Size: %ld (%s)\n"
+    " - Block Size: %ld (%s)\n"
+    " - Max Chunk Size: %ld (%s)\n"
+    " - Best Chunk Size: %ld (%s)\n"
+    " - Number of Chunks in File: %ld\n"
+    " - Number of Blocks per Chunk: %ld\n",
+    file_size,
+    file_size_iec,
+    block_size,
+    block_size_iec,
+    max_chunk_size,
+    max_chunk_size_iec,
+    best_chunk_size,
+    best_chunk_size_iec,
+    chunks_in_file,
+    blocks_per_chunk
+  );
+}
+
+int main(int argc, char *const *argv)
+{
+  long int file_size, best_chunk_size;
+  struct options options;
 
   if (!get_options(argc, argv, &options)) {
     print_usage(*argv);
@@ -142,7 +185,7 @@ int main(int argc, char *const *argv)
   }
 
   file_size = get_file_size(options.file_path);
-  if (file_size < 0) {
+  if (file_size < 0L) {
     fprintf(
       stderr,
       " > Error reading information from file: \"%s\" (%s)\n",
@@ -154,7 +197,7 @@ int main(int argc, char *const *argv)
 
   best_chunk_size = get_best_chunk_size(options.block_size, options.max_chunk_size, file_size);
 
-  if (best_chunk_size <= 0) {
+  if (best_chunk_size <= 0L) {
     fprintf(
       stderr,
       " > Incompatible values for block, max chunk and file sizes: %ld, %ld, %ld.\n",
@@ -163,38 +206,17 @@ int main(int argc, char *const *argv)
     return EXIT_FAILURE;
   }
 
-  get_IEC_representation(file_size, file_size_iec, IEC_BUFFER_SIZE);
-  get_IEC_representation(best_chunk_size, best_chunk_size_iec, IEC_BUFFER_SIZE);
-  get_IEC_representation(options.block_size, block_size_iec, IEC_BUFFER_SIZE);
-  get_IEC_representation(options.max_chunk_size, max_chunk_size_iec, IEC_BUFFER_SIZE);
 
   if (options.verbose) {
-    printf(
-      "File Size: %ld (%s)\n"
-      "Block Size: %ld (%s)\n"
-      "Max Chunk Size: %ld (%s)\n"
-      "Best Chunk Size: %ld (%s)\n"
-      "Number of Chunks in File: %ld\n"
-      "Number of Blocks per Chunk: %ld\n",
+    print_details(
       file_size,
-      file_size_iec,
       options.block_size,
-      block_size_iec,
       options.max_chunk_size,
-      max_chunk_size_iec,
-      best_chunk_size,
-      best_chunk_size_iec,
-      file_size / best_chunk_size,
-      best_chunk_size / options.block_size
-    );
-  } else {
-    printf(
-      "File Size: %ld\n"
-      "Best Chunk Size: %ld\n",
-      file_size,
       best_chunk_size
     );
   }
+
+  printf("%ld\n", best_chunk_size);
 
   return EXIT_SUCCESS;
 }
