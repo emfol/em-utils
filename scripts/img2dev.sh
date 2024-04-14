@@ -10,11 +10,11 @@ print_usage() {
   )
 }
 
-
 prompt_user() {
   (
     exec 3>&1 </dev/tty >/dev/tty 2>&1
-    printf '%s ' "$1" >&2
+    question="$1"
+    printf '%s ' "${question}" >&2
     if ! read answer
     then
       printf '\n' >&2
@@ -95,10 +95,10 @@ then
     'skip_confirm' "${skip_confirm}" >&2
 fi
 
-# Confirm data loss
+# Confirm data loss in target device
 if [ -z "${skip_confirm}" ]
 then
-  question=" > DATA IN \"${target_device}\" WILL BE ERASED!!! CONTINUE? [y|N]"
+  question=" > DATA IN \"${target_device}\" WILL BE LOST!!! CONTINUE? [y|N]"
   answer=$(prompt_user "${question}" | tr '[:upper:]' '[:lower:]' )
   if [ "X${answer}" != 'Xy' ] && [ "X${answer}" != 'Xyes' ]
   then
@@ -107,5 +107,8 @@ then
   fi
 fi
 
+# Prepare arguments for dd utility
+set -- "if=${image_file}" "of=${target_device}" oflag=sync status=progress
+
 # TODO:
-echo dd if="${image_file}" of="${target_device}"
+echo dd "$@"
