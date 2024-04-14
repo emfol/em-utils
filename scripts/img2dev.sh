@@ -15,7 +15,10 @@ prompt_user() {
   (
     exec 3>&1 </dev/tty >/dev/tty 2>&1
     printf '%s ' "$1" >&2
-    read answer
+    if ! read answer
+    then
+      printf '\n' >&2
+    fi
     printf '%s\n' "${answer}" >&3
   )
 }
