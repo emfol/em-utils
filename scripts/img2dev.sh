@@ -12,6 +12,8 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "${script}" 2>/dev/null)" >/dev/null 
 script="${script_dir}/$(basename -- "${script}")"
 local_bin_dir=$(CDPATH='' cd -- "${script_dir}/../bin" >/dev/null 2>&1 && pwd -P)
 bcs_utility="${local_bin_dir}/bcs"
+starts_with_utility="${local_bin_dir}/starts_with"
+realpath_utility=$(command -v realpath 2>/dev/null)
 dd_utility=$(command -v dd 2>/dev/null)
 sha256sum_utility=$(command -v sha256sum 2>/dev/null)
 
@@ -21,7 +23,7 @@ sha256sum_utility=$(command -v sha256sum 2>/dev/null)
 print_abort() {
   (
     message="$1"
-    printf ' > Aborting:\n\t%s\n' "${message}" >&2
+    printf ' > Aborting:\n   - %s\n' "${message}" >&2
   )
 }
 
@@ -44,11 +46,34 @@ prompt_user() {
   )
 }
 
+device_is_available() {
+  (
+    target_device_path=$("${realpath_utility}" -q "$1" 2>/dev/null)
+    if [ $? -ne 0 ] || [ ! -b "${target_device_path}" ]
+    then
+      print_abort 'Invalid block device.'
+      exit 1
+    fi
+    mount 2>/dev/null | (
+      while read -r device not_used
+      do
+        device_path=$("${realpath_utility}" -q "${device}" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -b "${device_path}" ] && "${starts_with_utility}" "${target_device_path}" "${device_path}"
+        then
+          print_abort "Mounted file system for: ${device_path}"
+          exit 1
+        fi
+      done
+      exit 0
+    )
+  )
+}
+
 ##
 # Script Logic
 
 # Make sure dependencies are available
-for utility_name in bcs_utility dd_utility sha256sum_utility
+for utility_name in bcs_utility starts_with_utility realpath_utility dd_utility sha256sum_utility
 do
   utility=$(eval "printf '%s\n' \"\$${utility_name}\"")
   if [ -z "${utility}" ] || ! command -v "${utility}" >/dev/null 2>&1
@@ -174,6 +199,12 @@ then
   printf ' > DEBUG:\n' >&2
   printf '   - A total of %s data chunks will be written to "%s"\n' \
     "${chunk_count}" "${target_device}" >&2
+fi
+
+# Check if target device is available
+if ! device_is_available "${target_device}"
+then
+  exit 1
 fi
 
 # Confirm data loss in target device
