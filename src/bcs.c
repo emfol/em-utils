@@ -216,7 +216,7 @@ int main(int argc, char *const *argv)
     );
   }
 
-  printf("%ld\n", best_chunk_size);
+  printf("%ld %ld\n", best_chunk_size, file_size);
 
   return EXIT_SUCCESS;
 }

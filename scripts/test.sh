@@ -25,15 +25,15 @@ test -z "${output}" && echo OK || echo FAIL
 
 output=$(bcs -v -b 2048 "${f2kib_block}" 2>/dev/null)
 test $? -eq 0 && echo OK || echo FAIL
-test "X${output}" = "X2048" && echo OK || echo FAIL
+test "X${output}" = "X2048 $((2048 * 8191))" && echo OK || echo FAIL
 
 output=$(bcs -v "${f4kib_block}" 2>/dev/null)
 test $? -eq 0 && echo OK || echo FAIL
-test "${output}" -eq 4194304 && echo OK || echo FAIL
+test "${output}" = "4194304 $((4096 * 8192))" && echo OK || echo FAIL
 
 output=$(bcs -v -b 2048 "${f4kib_block}" 2>/dev/null)
 test $? -eq 0 && echo OK || echo FAIL
-test "${output}" -eq 4194304 && echo OK || echo FAIL
+test "${output}" = "4194304 $((4096 * 8192))" && echo OK || echo FAIL
 
 output=$(bcs -v -b 2047 "${f4kib_block}" 2>/dev/null)
 test $? -ne 0 && echo OK || echo FAIL
