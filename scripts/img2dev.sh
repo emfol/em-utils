@@ -82,7 +82,7 @@ device_is_available() {
     target_device_path=$("${realpath_cmd}" -q "$1" 2>/dev/null)
     if [ $? -ne 0 ] || [ ! -b "${target_device_path}" ]
     then
-      print_abort 'Invalid block device.'
+      print_abort 'Invalid block device...'
       exit 2
     fi
     mount 2>/dev/null | (
@@ -95,11 +95,11 @@ device_is_available() {
           if [ -n "${try_umount}" ]
           then
             printf ' > INFO:\n' >&2
-            printf '   - Trying to unmount: "%s"\n' "${device_path}" >&2
+            printf '   - Trying to unmount: "%s"...\n' "${device_path}" >&2
             umount "${device_path}" >/dev/null 2>&1
             has_mounted_partitions='yes'
           else
-            print_abort "Mounted file system for: ${device_path}"
+            print_abort "Mounted file system for: \"${device_path}\"..."
             exit 2
           fi
         fi
@@ -138,7 +138,7 @@ do
   utility=$(eval "printf '%s\n' \"\$${utility_name}\"")
   if [ -z "${utility}" ] || ! command -v "${utility}" >/dev/null 2>&1
   then
-    print_abort "Dependency not found: ${utility_name%_cmd}"
+    print_abort "Dependency not found: \"${utility_name%_cmd}\"..."
     exit 1
   fi
 done
@@ -209,7 +209,7 @@ fi
 # Make sure the target device is valid and supported
 if ! is_supported_block_device "${target_device}"
 then
-  print_abort "Invalid or unsupported device: ${target_device}"
+  print_abort "Invalid or unsupported device: \"${target_device}\"..."
   exit 1
 fi
 
@@ -252,7 +252,7 @@ fi
 # Abort if proper chunk size could not be determined.
 if [ "${chunk_size}" -lt "${min_block_size}" ] || [ "${file_size}" -lt "${min_block_size}" ] || [ "${block_size}" -lt "${min_block_size}" ]
 then
-  printf ' > Aborting: the proper chunk size for data transfer could not be determined...\n' >&2
+  print_abort 'The proper chunk size for data transfer could not be determined...'
   exit 1
 fi
 
@@ -260,13 +260,17 @@ fi
 chunk_count=$((file_size / chunk_size))
 if [ "$((chunk_count * chunk_size))" -ne "${file_size}" ]
 then
-  printf ' > Aborting: unexpected mismatch for number and size of data transfer chunks...\n' >&2
+  print_abort 'Unexpected mismatch for number and size of data transfer chunks...'
   exit 1
 fi
 
 
 printf ' > INFO:\n' >&2
-printf '   - A total of %s data chunks will be written to "%s"\n' \
+printf '   - The source image "%s" will be written to "%s";\n' \
+  "${image_file}" "${target_device}" >&2
+printf '   - The total payload of %s bytes will be split into chunks of %s bytes;\n' \
+  "${file_size}" "${chunk_size}" >&2
+printf '   - A total of %s data chunks will be written to "%s";\n' \
   "${chunk_count}" "${target_device}" >&2
 
 
@@ -298,34 +302,70 @@ then
 fi
 
 printf ' > INFO:\n' >&2
-printf '   - Wiping target device: "%s"\n' "${target_device}" >&2
+printf '   - Wiping target device: "%s";\n' "${target_device}" >&2
 
 # Wipe device
 if ! wipe_gpt "${target_device}"
 then
-  print_abort "Error wiping target device: ${target_device}"
+  print_abort "Error wiping target device: \"${target_device}\"..."
   exit 1
 fi
 
 printf ' > INFO:\n' >&2
-printf '   - Calculating the SHA-256 sum of the source image file: "%s"\n' "${image_file}" >&2
+printf '   - Calculating the SHA-256 checksum of the source image file: "%s";\n' "${image_file}" >&2
 
-checksum=$(get_sha256sum  "${image_file}")
-if [ $? -eq 0 ]
+checksum=$(get_sha256sum "${image_file}")
+if [ $? -eq 0 ] && [ ${#checksum} -eq 64 ]
 then
-  printf '   - SHA-256 Sum: "%s"\n' "${checksum}" >&2
+  printf '   - SHA-256 Checksum: "%s";\n' "${checksum}" >&2
 else
-  print_abort "Error calculating the SHA-256 sum of the source image file: ${image_file}"
+  print_abort 'SHA-256 Checksum could not be calculated...'
   exit 1
 fi
 
-# Prepare arguments for dd utility
+# Prepare arguments for writting.
 set -- \
   "if=${image_file}" \
   "of=${target_device}" \
   "bs=${chunk_size}" \
+  "count=${chunk_count}" \
+  iflag=fullblock \
   oflag=sync \
   status=progress
 
-# TODO:
-echo "${dd_cmd}" "$@"
+printf ' > INFO:\n' >&2
+printf '   - Writing source image to target device with params:\n' >&2
+printf '      - %s\n' "$@" >&2
+printf '\n' >&2
+
+"${dd_cmd}" "$@" </dev/tty >/dev/tty 2>&1
+if [ $? -ne 0 ]
+then
+  print_abort 'Error writing source image to target device...'
+  exit 1
+fi
+
+printf '\n' >&2
+printf ' > INFO:\n' >&2
+printf '   - Verifying...\n' >&2
+printf '\n' >&2
+
+# Prepare arguments for verification.
+set -- \
+  "if=${target_device}" \
+  "bs=${chunk_size}" \
+  "count=${chunk_count}" \
+  iflag=fullblock \
+  status=progress
+
+result=$("${dd_cmd}" "$@" </dev/tty 2>/dev/tty | get_sha256sum -)
+if [ $? -ne 0 ] || [ "X${result}" != "X${checksum}" ]
+then
+  print_abort "Verification failed: \"${result}\" does not match \"${checksum}\"..."
+  exit 1
+fi
+
+printf '\n' >&2
+printf ' > INFO:\n' >&2
+printf '   - Done!\n\n' >&2
+exit 0
