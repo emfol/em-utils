@@ -60,7 +60,7 @@ is_supported_block_device() {
         printf ' > DEBUG:\n' >&2
         printf '   - %s: "%s"\n' \
           'min_block_size' "${min_block_size}" \
-          'sector_size' "${sector_size}"
+          'sector_size' "${sector_size}" >&2
       fi
       if [ "X${sector_size}" = "X${min_block_size}" ]
       then
@@ -94,6 +94,8 @@ device_is_available() {
         then
           if [ -n "${try_umount}" ]
           then
+            printf ' > INFO:\n' >&2
+            printf '   - Trying to unmount: "%s"\n' "${device_path}" >&2
             umount "${device_path}" >/dev/null 2>&1
             has_mounted_partitions='yes'
           else
@@ -111,6 +113,19 @@ wipe_gpt() {
   (
     target_device_path="$1"
     printf '%s\n' x z Y Y | gdisk "${target_device_path}" >/dev/null 2>&1
+  )
+}
+
+get_sha256sum() {
+  (
+    filepath="$1"
+    result=$("${sha256sum_cmd}" "${filepath}" 2>/dev/null)
+    if [ $? -eq 0 ]
+    then
+      printf '%s\n' "${result%% *}"
+      exit 0
+    fi
+    exit 1
   )
 }
 
@@ -249,13 +264,11 @@ then
   exit 1
 fi
 
-# Print variables is DEBUG is enabled
-if [ -n "${DEBUG}" ]
-then
-  printf ' > DEBUG:\n' >&2
-  printf '   - A total of %s data chunks will be written to "%s"\n' \
-    "${chunk_count}" "${target_device}" >&2
-fi
+
+printf ' > INFO:\n' >&2
+printf '   - A total of %s data chunks will be written to "%s"\n' \
+  "${chunk_count}" "${target_device}" >&2
+
 
 # Check if target device is available
 device_is_available --umount "${target_device}"
@@ -284,10 +297,26 @@ then
   fi
 fi
 
+printf ' > INFO:\n' >&2
+printf '   - Wiping target device: "%s"\n' "${target_device}" >&2
+
 # Wipe device
 if ! wipe_gpt "${target_device}"
 then
   print_abort "Error wiping target device: ${target_device}"
+  exit 1
+fi
+
+printf ' > INFO:\n' >&2
+printf '   - Calculating the SHA-256 sum of the source image file: "%s"\n' "${image_file}" >&2
+
+checksum=$(get_sha256sum  "${image_file}")
+if [ $? -eq 0 ]
+then
+  printf '   - SHA-256 Sum: "%s"\n' "${checksum}" >&2
+else
+  print_abort "Error calculating the SHA-256 sum of the source image file: ${image_file}"
+  exit 1
 fi
 
 # Prepare arguments for dd utility
