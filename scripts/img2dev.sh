@@ -350,6 +350,9 @@ printf ' > INFO:\n' >&2
 printf '   - Verifying...\n' >&2
 printf '\n' >&2
 
+# Make sure the data has been written to disk.
+sync
+
 # Prepare arguments for verification.
 set -- \
   "if=${target_device}" \
