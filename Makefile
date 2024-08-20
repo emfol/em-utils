@@ -1,11 +1,14 @@
-CFLAGS := -std=c89 -pedantic -Wall -g -D_XOPEN_SOURCE=600
-BINARIES := bin/bcs bin/starts_with
+CFLAGS := -std=c89 -pedantic -Wall -O2 -g -D_XOPEN_SOURCE=600
+BINARIES := bin/args bin/bcs bin/starts_with
 
 $(shell test ! -e ./bin && mkdir -p bin)
 
 .PHONY: clean test
 
 all: $(BINARIES)
+
+bin/args: src/args.c
+	cc $(CFLAGS) -o $@ $<
 
 bin/bcs: src/bcs.c
 	cc $(CFLAGS) -o $@ $<
