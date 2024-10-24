@@ -6,7 +6,7 @@ export GREP_OPTIONS=''
 script="$0"
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${script}")" >/dev/null && pwd -P)
 script="${script_dir}/$(basename -- "${script}")"
-bin_dir=$(CDPATH='' cd -- "${script}/../bin" && pwd -P)
+bin_dir=$(CDPATH='' cd -- "${script_dir}/../bin" && pwd -P)
 
 export PATH="${bin_dir}:${PATH}"
 

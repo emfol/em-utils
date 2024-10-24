@@ -17,7 +17,7 @@ bin/starts_with: src/starts_with.c
 	cc $(CFLAGS) -o $@ $<
 
 test: $(BINARIES)
-	./test
+	./scripts/test.sh
 
 clean:
 	rm -rf $(BINARIES)
