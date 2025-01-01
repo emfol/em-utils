@@ -109,10 +109,31 @@ device_is_available() {
   )
 }
 
+has_gpt_and_mbr() {
+  (
+    target_device_path="$1"
+    printf '%s\n' 2 | (
+      (
+        "${gdisk_cmd}" -l "${target_device_path}" | grep -Fic -e 'Found valid MBR and GPT.' -e 'Using GPT' | (
+          read -r count && test 2 -eq "${count}"
+        )
+      ) && ! read -r input
+    )
+  )
+}
+
 wipe_gpt() {
   (
     target_device_path="$1"
-    printf '%s\n' x z Y Y | gdisk "${target_device_path}" >/dev/null 2>&1
+    (
+      if has_gpt_and_mbr "${target_device_path}" >/dev/null 2>&1
+      then
+        set -- 2 x z Y Y
+      else
+        set -- x z Y Y
+      fi
+      printf '%s\n' "$@"
+    ) | "${gdisk_cmd}" "${target_device_path}" >/dev/null 2>&1
   )
 }
 
