@@ -4,7 +4,7 @@ set +e
 export GREP_OPTIONS=''
 
 ##
-# Definittions
+# Definitions
 
 cmd="$0"
 script="${cmd}"
@@ -38,14 +38,25 @@ print_usage() {
 
 prompt_user() {
   (
-    exec 3>&1 </dev/tty >/dev/tty 2>&1
-    question="$1"
-    printf '%s ' "${question}" >&2
-    if ! read answer
+    exec 3>&1 </dev/tty >/dev/tty
+    while [ $# -gt 0 ]
+    do
+      prompt="$1"
+      shift
+      if [ $# -eq 0 ]
+      then
+        printf '%s' "${prompt}"
+      else
+        printf '%s\n' "${prompt}"
+      fi
+    done
+    if ! read -r answer
     then
-      printf '\n' >&2
+      printf '\n'
+      exit 1
     fi
     printf '%s\n' "${answer}" >&3
+    exit 0
   )
 }
 
@@ -140,8 +151,7 @@ wipe_gpt() {
 get_sha256sum() {
   (
     filepath="$1"
-    result=$("${sha256sum_cmd}" "${filepath}" 2>/dev/null)
-    if [ $? -eq 0 ]
+    if result=$("${sha256sum_cmd}" "${filepath}" 2>/dev/null)
     then
       printf '%s\n' "${result%% *}"
       exit 0
@@ -149,6 +159,40 @@ get_sha256sum() {
     exit 1
   )
 }
+
+get_file_segments() {
+  (
+    path="$1"
+    wc -c -- "${path}" | (
+      if ! read size name
+      then exit 1
+      fi
+      for block in $((4 * 1024 * 1024)) $((1024 * 1024)) $((4 * 1024)) 512 1
+      do
+        if ! [ "${size}" -gt 0 ]
+        then break
+        fi
+        if ! remainder=$(($size % $block))
+        then exit 2
+        fi
+        if ! segment=$(($size - $remainder))
+        then exit 3
+        fi
+        if ! count=$(($segment / $block))
+        then exit 4
+        fi
+        size="${remainder}"
+        if [ "${count}" -gt 0 ]
+        then printf '%d %d\n' "${block}" "${count}"
+        fi
+      done
+      exit 0
+    )
+  )
+}
+
+get_file_segments "$@"
+exit $?
 
 ##
 # Script Logic
@@ -314,8 +358,8 @@ fi
 if [ -z "${skip_confirm}" ]
 then
   question=" > DATA IN \"${target_device}\" WILL BE LOST!!! CONTINUE? [y|N]"
-  answer=$(prompt_user "${question}" | tr '[:upper:]' '[:lower:]')
-  if [ "X${answer}" != 'Xy' ] && [ "X${answer}" != 'Xyes' ]
+  answer=$(prompt_user "${question} " | tr '[:upper:]' '[:lower:]') :
+  if [ "/${answer}" != '/y' ] && [ "/${answer}" != '/yes' ]
   then
     printf ' > Aborting...\n' >&2
     exit 1
