@@ -4,7 +4,7 @@ set +e
 export GREP_OPTIONS=''
 
 ##
-# Definittions
+# Definitions
 
 cmd="$0"
 script="${cmd}"

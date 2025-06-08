@@ -88,7 +88,7 @@ device_is_available() {
     if [ "X$1" = 'X--umount' ]
     then
       try_umount='yes'
-      shift 1
+      shift
     fi
     target_device_path=$("${realpath_cmd}" -q "$1" 2>/dev/null)
     if [ $? -ne 0 ] || [ ! -b "${target_device_path}" ]
@@ -160,30 +160,98 @@ get_sha256sum() {
   )
 }
 
+size_to_segments() {
+  (
+    size="$1"
+    if ! [ "${size}" -gt 0 ]
+    then exit 1
+    fi
+    for block in $((4 * 1024 * 1024)) $((1024 * 1024)) $((4 * 1024)) 512 1
+    do
+      if ! remainder=$(($size % $block))
+      then exit 2
+      fi
+      if ! segment=$(($size - $remainder))
+      then exit 3
+      fi
+      if ! count=$(($segment / $block))
+      then exit 4
+      fi
+      if [ "${count}" -gt 0 ]
+      then printf '%d %d\n' "${block}" "${count}"
+      fi
+      size="${remainder}"
+      if ! [ "${size}" -gt 0 ]
+      then break
+      fi
+    done
+    exit 0
+  )
+}
+
+get_file_size() {
+  (
+    file="$1"
+    [ -f "${file}" ] && wc -c -- "${file}" | (
+      unset IFS
+      if ! read size name
+      then exit 2
+      fi
+      if ! printf '%d\n' "${size}"
+      then exit 3
+      fi
+      exit 0
+    )
+  )
+}
+
 get_file_segments() {
   (
-    path="$1"
-    wc -c -- "${path}" | (
-      if ! read size name
-      then exit 1
+    file="$1"
+    if ! size=$(get_file_size "${file}")
+    then exit 1
+    fi
+    size_to_segments "${size}"
+  )
+}
+
+write_segments() {
+  (
+    if ! [ $# -eq 3 ]
+    then exit 1
+    fi
+    source="$1"
+    target="$2"
+    size="$3"
+    if ! (
+      ( [ "/${source}" = '/-' ] || [ -r "${source}" ] ) &&
+      ( [ "/${target}" = '/-' ] || [ -w "${target}" ] ) &&
+      [ "${size}" -gt 0 ]
+    )
+    then exit 2
+    fi
+    if [ "/${source}" = '/-' ]
+    then if ! exec 3<&0
+      then exit 3
       fi
-      for block in $((4 * 1024 * 1024)) $((1024 * 1024)) $((4 * 1024)) 512 1
+    else if ! exec 3<"${source}"
+      then exit 3
+      fi
+    fi
+    if [ "/${target}" = '/-' ]
+    then if ! exec 4>&1
+      then exit 4
+      fi
+    else if ! exec 4>"${target}"
+      then exit 4
+      fi
+    fi
+    size_to_segments "${size}" | (
+      unset -v IFS
+      while read block count unused
       do
-        if ! [ "${size}" -gt 0 ]
-        then break
-        fi
-        if ! remainder=$(($size % $block))
-        then exit 2
-        fi
-        if ! segment=$(($size - $remainder))
-        then exit 3
-        fi
-        if ! count=$(($segment / $block))
-        then exit 4
-        fi
-        size="${remainder}"
-        if [ "${count}" -gt 0 ]
-        then printf '%d %d\n' "${block}" "${count}"
+        if ! dd bs="${block}" count="${count}" conv=sync <&3 >&4
+        then exit 5
         fi
       done
       exit 0
@@ -191,8 +259,23 @@ get_file_segments() {
   )
 }
 
-get_file_segments "$@"
-exit $?
+
+
+#get_file_size "$@"
+#get_file_segments "$@"
+
+if ! size=$(get_file_size "$1")
+then exit 1
+fi
+
+shift
+
+if ! write_segments "$@" "${size}"
+then exit $?
+else
+  exit 0
+fi
+
 
 ##
 # Script Logic
@@ -230,7 +313,7 @@ fi
 # Remove the special "--noesc" (no-escalation) argument.
 if [ "X$1" = 'X--noesc' ]
 then
-  shift 1
+  shift
 fi
 
 # Initialize main application variables
