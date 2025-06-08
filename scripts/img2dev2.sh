@@ -11,14 +11,11 @@ script="${cmd}"
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${script}" 2>/dev/null)" >/dev/null 2>&1 && pwd -P)
 script="${script_dir}/$(basename -- "${script}")"
 local_bin_dir=$(CDPATH='' cd -- "${script_dir}/../bin" >/dev/null 2>&1 && pwd -P)
-bcs_cmd="${local_bin_dir}/bcs"
 starts_with_cmd="${local_bin_dir}/starts_with"
 realpath_cmd=$(command -v realpath 2>/dev/null)
 dd_cmd=$(command -v dd 2>/dev/null)
 sha256sum_cmd=$(command -v sha256sum 2>/dev/null)
 gdisk_cmd=$(command -v gdisk 2>/dev/null)
-blockdev_cmd=$(command -v blockdev 2>/dev/null)
-min_block_size=512
 
 ##
 # Helper Functions
@@ -38,7 +35,9 @@ print_usage() {
 
 prompt_user() {
   (
-    exec 3>&1 </dev/tty >/dev/tty
+    if ! exec 3>&1 </dev/tty >/dev/tty
+    then exit 1
+    fi
     while [ $# -gt 0 ]
     do
       prompt="$1"
@@ -60,45 +59,27 @@ prompt_user() {
   )
 }
 
-is_supported_block_device() {
-  (
-    target_device_path="$1"
-    if [ -b "${target_device_path}" ]
-    then
-      sector_size=$("${blockdev_cmd}" --getss "${target_device_path}" 2>/dev/null)
-      if [ -n "${DEBUG}" ]
-      then
-        printf ' > DEBUG:\n' >&2
-        printf '   - %s: "%s"\n' \
-          'min_block_size' "${min_block_size}" \
-          'sector_size' "${sector_size}" >&2
-      fi
-      if [ "X${sector_size}" = "X${min_block_size}" ]
-      then
-        exit 0
-      fi
-    fi
-    exit 1
-  )
-}
-
 device_is_available() {
   (
     try_umount=''
-    if [ "X$1" = 'X--umount' ]
+    if [ "/$1" = '/--umount' ]
     then
       try_umount='yes'
       shift
     fi
-    target_device_path=$("${realpath_cmd}" -q "$1" 2>/dev/null)
-    if [ $? -ne 0 ] || [ ! -b "${target_device_path}" ]
+    if ! target_device_path=$("${realpath_cmd}" -q "$1")
     then
-      print_abort 'Invalid block device...'
+      print_abort 'Bad target device...'
+      exit 2
+    fi
+    if [ ! -b "${target_device_path}" ]
+    then
+      print_abort 'Target is not a block device...'
       exit 2
     fi
     mount 2>/dev/null | (
       has_mounted_partitions=''
-      while read -r device not_used
+      while read -r device unused
       do
         device_path=$("${realpath_cmd}" -q "${device}" 2>/dev/null)
         if [ $? -eq 0 ] && [ -b "${device_path}" ] && "${starts_with_cmd}" "${target_device_path}" "${device_path}"
@@ -137,21 +118,21 @@ wipe_gpt() {
   (
     target_device_path="$1"
     (
-      if has_gpt_and_mbr "${target_device_path}" >/dev/null 2>&1
+      if has_gpt_and_mbr "${target_device_path}"
       then
         set -- 2 x z Y Y
       else
         set -- x z Y Y
       fi
       printf '%s\n' "$@"
-    ) | "${gdisk_cmd}" "${target_device_path}" >/dev/null 2>&1
+    ) | "${gdisk_cmd}" "${target_device_path}"
   )
 }
 
 get_sha256sum() {
   (
     filepath="$1"
-    if result=$("${sha256sum_cmd}" "${filepath}" 2>/dev/null)
+    if result=$("${sha256sum_cmd}" "${filepath}")
     then
       printf '%s\n' "${result%% *}"
       exit 0
@@ -193,7 +174,7 @@ get_file_size() {
   (
     file="$1"
     [ -f "${file}" ] && wc -c -- "${file}" | (
-      unset IFS
+      unset -v IFS
       if ! read size name
       then exit 2
       fi
@@ -250,9 +231,11 @@ write_segments() {
       unset -v IFS
       while read block count unused
       do
+        printf ' > Writing segment with %d blocks of %d bytes...\n' "${count}" "${block}" >&2
         if ! dd bs="${block}" count="${count}" conv=sync <&3 >&4
         then exit 5
         fi
+        printf ' > Done!\n' >&2
       done
       exit 0
     )
@@ -281,7 +264,7 @@ fi
 # Script Logic
 
 # Make sure dependencies are available
-for utility_name in bcs_cmd starts_with_cmd realpath_cmd dd_cmd sha256sum_cmd gdisk_cmd blockdev_cmd
+for utility_name in starts_with_cmd realpath_cmd sha256sum_cmd gdisk_cmd
 do
   utility=$(eval "printf '%s\n' \"\$${utility_name}\"")
   if [ -z "${utility}" ] || ! command -v "${utility}" >/dev/null 2>&1
@@ -348,60 +331,27 @@ done
 shift $((OPTIND - 1))
 
 # Make sure required arguments are provided
-if [ $# -gt 0 ] || [ -z "${image_file}" ] || [ -z "${target_device}" ]
+if [ -z "${image_file}" ] || [ -z "${target_device}" ]
 then
   print_usage
   exit 1
 fi
 
-# Make sure the target device is valid and supported
-if ! is_supported_block_device "${target_device}"
-then
-  print_abort "Invalid or unsupported device: \"${target_device}\"..."
-  exit 1
-fi
-
-# Try to determine best chunk size for copy
-while [ "${chunk_size}" -lt "${min_block_size}" ] && [ "${block_size}" -ge "${min_block_size}" ]
-do
-  result=$("${bcs_cmd}" -b "${block_size}" "${image_file}" 2>/dev/null)
-  if [ $? -ne 0 ]
-  then
-    block_size=$((block_size / 2))
-    continue
-  fi
-  chunk_size="${result%% *}"
-  file_size="${result##* }"
-  # Make sure the variables contain numeric values
-  chunk_size=$((chunk_size + 0))
-  file_size=$((file_size + 0))
-done
-
-# Print variables is DEBUG is enabled
+# Print variables if DEBUG is enabled
 if [ -n "${DEBUG}" ]
 then
   printf ' > DEBUG:\n' >&2
   printf '   - %s: "%s"\n' \
-    'bcs_cmd' "${bcs_cmd}" \
     'starts_with_cmd' "${starts_with_cmd}" \
     'realpath_cmd' "${realpath_cmd}" \
-    'dd_cmd' "${dd_cmd}" \
     'sha256sum_cmd' "${sha256sum_cmd}" \
     'gdisk_cmd' "${gdisk_cmd}" \
-    'blockdev_cmd' "${blockdev_cmd}" \
     'target_device' "${target_device}" \
     'image_file' "${image_file}" \
     'skip_confirm' "${skip_confirm}" \
     'block_size' "${block_size}" \
     'file_size' "${file_size}" \
     'chunk_size' "${chunk_size}" >&2
-fi
-
-# Abort if proper chunk size could not be determined.
-if [ "${chunk_size}" -lt "${min_block_size}" ] || [ "${file_size}" -lt "${min_block_size}" ] || [ "${block_size}" -lt "${min_block_size}" ]
-then
-  print_abort 'The proper chunk size for data transfer could not be determined...'
-  exit 1
 fi
 
 # Make sure the number and size of chunks match the total file size.
@@ -411,7 +361,6 @@ then
   print_abort 'Unexpected mismatch for number and size of data transfer chunks...'
   exit 1
 fi
-
 
 printf ' > INFO:\n' >&2
 printf '   - The source image "%s" will be written to "%s";\n' \
@@ -485,6 +434,8 @@ printf ' > INFO:\n' >&2
 printf '   - Writing source image to target device with params:\n' >&2
 printf '      - %s\n' "$@" >&2
 printf '\n' >&2
+
+write_segments "${image_file}" "${image_file}" 
 
 "${dd_cmd}" "$@" </dev/tty >/dev/tty 2>&1
 if [ $? -ne 0 ]
