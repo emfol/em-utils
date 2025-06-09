@@ -11,9 +11,7 @@ script="${cmd}"
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${script}" 2>/dev/null)" >/dev/null 2>&1 && pwd -P)
 script="${script_dir}/$(basename -- "${script}")"
 local_bin_dir=$(CDPATH='' cd -- "${script_dir}/../bin" >/dev/null 2>&1 && pwd -P)
-starts_with_cmd="${local_bin_dir}/starts_with"
 realpath_cmd=$(command -v realpath 2>/dev/null)
-dd_cmd=$(command -v dd 2>/dev/null)
 sha256sum_cmd=$(command -v sha256sum 2>/dev/null)
 gdisk_cmd=$(command -v gdisk 2>/dev/null)
 
@@ -59,6 +57,14 @@ prompt_user() {
   )
 }
 
+begins_with() {
+  (
+    prefix="$1"
+    target="$2"
+    case "${target}" in "${prefix}"*) exit 0;; *) exit 1;; esac;
+  )
+}
+
 device_is_available() {
   (
     try_umount=''
@@ -72,28 +78,30 @@ device_is_available() {
       print_abort 'Bad target device...'
       exit 2
     fi
-    if [ ! -b "${target_device_path}" ]
+    if ! [ -b "${target_device_path}" ]
     then
       print_abort 'Target is not a block device...'
       exit 2
     fi
-    mount 2>/dev/null | (
+    mount | (
       has_mounted_partitions=''
       while read -r device unused
       do
-        device_path=$("${realpath_cmd}" -q "${device}" 2>/dev/null)
-        if [ $? -eq 0 ] && [ -b "${device_path}" ] && "${starts_with_cmd}" "${target_device_path}" "${device_path}"
+        if ! device_path=$("${realpath_cmd}" -q "${device}")
+        then continue
+        fi
+        if ! ( [ -b "${device_path}" ] && begins_with "${target_device_path}" "${device_path}" )
+        then continue
+        fi
+        if [ -n "${try_umount}" ]
         then
-          if [ -n "${try_umount}" ]
-          then
-            printf ' > INFO:\n' >&2
-            printf '   - Trying to unmount: "%s"...\n' "${device_path}" >&2
-            umount "${device_path}" >/dev/null 2>&1
-            has_mounted_partitions='yes'
-          else
-            print_abort "Mounted file system for: \"${device_path}\"..."
-            exit 2
-          fi
+          printf ' > INFO:\n' >&2
+          printf '   - Trying to unmount: "%s"...\n' "${device_path}" >&2
+          umount "${device_path}" >/dev/null 2>&1
+          has_mounted_partitions='yes'
+        else
+          print_abort "Mounted file system for: \"${device_path}\"..."
+          exit 2
         fi
       done
       test -z "${has_mounted_partitions}"
@@ -227,14 +235,20 @@ write_segments() {
       then exit 4
       fi
     fi
+    # Check if `sync` command is available
+    use_sync=$(command -v sync 2>/dev/null) :
     size_to_segments "${size}" | (
       unset -v IFS
-      while read block count unused
+      while read -r block count unused
       do
-        printf ' > Writing segment with %d blocks of %d bytes...\n' "${count}" "${block}" >&2
+        printf ' > Writing segment with %d blocks of %d bytes...\n\n' "${count}" "${block}" >&2
         if ! dd bs="${block}" count="${count}" conv=sync <&3 >&4
         then exit 5
         fi
+        if [ -n "${use_sync}" ]
+        then sync
+        fi
+        printf '\n' >&2
         printf ' > Done!\n' >&2
       done
       exit 0
@@ -242,29 +256,11 @@ write_segments() {
   )
 }
 
-
-
-#get_file_size "$@"
-#get_file_segments "$@"
-
-if ! size=$(get_file_size "$1")
-then exit 1
-fi
-
-shift
-
-if ! write_segments "$@" "${size}"
-then exit $?
-else
-  exit 0
-fi
-
-
 ##
 # Script Logic
 
 # Make sure dependencies are available
-for utility_name in starts_with_cmd realpath_cmd sha256sum_cmd gdisk_cmd
+for utility_name in realpath_cmd sha256sum_cmd gdisk_cmd
 do
   utility=$(eval "printf '%s\n' \"\$${utility_name}\"")
   if [ -z "${utility}" ] || ! command -v "${utility}" >/dev/null 2>&1
@@ -275,26 +271,28 @@ do
 done
 
 # Make sure referred arguments are provided.
-if [ $# -lt 1 ]
+if ! [ $# -gt 0 ]
 then
   print_usage
   exit 1
 fi
 
-# Ensure root privileges.
-if [ "X$(id -u)" != 'X0' ]
+# Ensure root privileges are granted.
+if [ "/$(id -u)" != '/0' ]
 then
-  if [ "X$1" != 'X--noesc' ]
+  if [ "/$1" != '/--no-escalation' ]
   then
-    sudo -E "${script}" --noesc "$@"
-    exit $?
+    if sudo -E "${script}" --no-escalation "$@"
+    then exit 0
+    else exit $?
+    fi
   fi
   printf ' > Root privileges required...\n' >&2
   exit 1
 fi
 
-# Remove the special "--noesc" (no-escalation) argument.
-if [ "X$1" = 'X--noesc' ]
+# Remove the special "--no-escalation" argument.
+if [ "/$1" = '/--no-escalation' ]
 then
   shift
 fi
@@ -303,10 +301,7 @@ fi
 skip_confirm=''
 image_file=''
 target_device=''
-block_size=4096
 file_size=0
-chunk_size=0
-chunk_count=0
 
 # Parse options
 while getopts ':yd:f:' arg
@@ -337,60 +332,62 @@ then
   exit 1
 fi
 
+# Determine size of image file
+if ! file_size=$(get_file_size "${image_file}")
+then
+  print_abort 'The size of the image file cannot be determined...'
+  exit 1
+fi
+
+# Assert the given image is not empty
+if ! [ "${file_size}" -gt 0 ]
+then
+  print_abort 'The image file is empty...'
+  exit 1
+fi
+
 # Print variables if DEBUG is enabled
 if [ -n "${DEBUG}" ]
 then
   printf ' > DEBUG:\n' >&2
   printf '   - %s: "%s"\n' \
-    'starts_with_cmd' "${starts_with_cmd}" \
+    'gdisk_cmd' "${gdisk_cmd}" \
     'realpath_cmd' "${realpath_cmd}" \
     'sha256sum_cmd' "${sha256sum_cmd}" \
-    'gdisk_cmd' "${gdisk_cmd}" \
     'target_device' "${target_device}" \
     'image_file' "${image_file}" \
     'skip_confirm' "${skip_confirm}" \
-    'block_size' "${block_size}" \
-    'file_size' "${file_size}" \
-    'chunk_size' "${chunk_size}" >&2
-fi
-
-# Make sure the number and size of chunks match the total file size.
-chunk_count=$((file_size / chunk_size))
-if [ "$((chunk_count * chunk_size))" -ne "${file_size}" ]
-then
-  print_abort 'Unexpected mismatch for number and size of data transfer chunks...'
-  exit 1
+    'file_size' "${file_size}" >&2
 fi
 
 printf ' > INFO:\n' >&2
-printf '   - The source image "%s" will be written to "%s";\n' \
+printf '   - The image file "%s" will be written to "%s";\n' \
   "${image_file}" "${target_device}" >&2
-printf '   - The total payload of %s bytes will be split into chunks of %s bytes;\n' \
-  "${file_size}" "${chunk_size}" >&2
-printf '   - A total of %s data chunks will be written to "%s";\n' \
-  "${chunk_count}" "${target_device}" >&2
-
+printf '   - The payload will be split into the following segments:\n' >&2
+size_to_segments "${file_size}" | (
+  while read -r block count unused
+  do
+    printf '     - %d chunk(s) of %d byte(s);\n' "${count}" "${block}" >&2
+  done
+)
 
 # Check if target device is available
-device_is_available --umount "${target_device}"
-status="$?"
-if [ "${status}" -gt 0 ]
-then
-  if [ "${status}" -gt 1 ]
-  then
-    exit 1
+if device_is_available --umount "${target_device}"
+then :
+else
+  if [ $? -gt 1 ]
+  then exit 1
   fi
   if ! device_is_available "${target_device}"
-  then
-    exit 1
+  then exit 1
   fi
 fi
 
 # Confirm data loss in target device
 if [ -z "${skip_confirm}" ]
 then
-  question=" > DATA IN \"${target_device}\" WILL BE LOST!!! CONTINUE? [y|N]"
-  answer=$(prompt_user "${question} " | tr '[:upper:]' '[:lower:]') :
+  question=" > DATA IN \"${target_device}\" WILL BE LOST!!! CONTINUE? [y|N] "
+  answer=$(prompt_user "${question}" | tr '[:upper:]' '[:lower:]') :
   if [ "/${answer}" != '/y' ] && [ "/${answer}" != '/yes' ]
   then
     printf ' > Aborting...\n' >&2
@@ -402,7 +399,7 @@ printf ' > INFO:\n' >&2
 printf '   - Wiping target device: "%s";\n' "${target_device}" >&2
 
 # Wipe device
-if ! wipe_gpt "${target_device}"
+if ! wipe_gpt "${target_device}" >/dev/null 2>&1
 then
   print_abort "Error wiping target device: \"${target_device}\"..."
   exit 1
@@ -411,59 +408,50 @@ fi
 printf ' > INFO:\n' >&2
 printf '   - Calculating the SHA-256 checksum of the source image file: "%s";\n' "${image_file}" >&2
 
-checksum=$(get_sha256sum "${image_file}")
-if [ $? -eq 0 ] && [ ${#checksum} -eq 64 ]
+if checksum=$(get_sha256sum "${image_file}")
 then
+  if ! [ ${#checksum} -eq 64 ]
+  then
+    print_abort 'Unexpected size for SHA-256 Checksum...'
+    exit 1
+  fi
   printf '   - SHA-256 Checksum: "%s";\n' "${checksum}" >&2
 else
   print_abort 'SHA-256 Checksum could not be calculated...'
   exit 1
 fi
 
-# Prepare arguments for writting.
-set -- \
-  "if=${image_file}" \
-  "of=${target_device}" \
-  "bs=${chunk_size}" \
-  "count=${chunk_count}" \
-  iflag=fullblock \
-  oflag=sync \
-  status=progress
-
 printf ' > INFO:\n' >&2
-printf '   - Writing source image to target device with params:\n' >&2
-printf '      - %s\n' "$@" >&2
-printf '\n' >&2
+printf '   - Writing image file to target device...\n\n' >&2
 
-write_segments "${image_file}" "${image_file}" 
-
-"${dd_cmd}" "$@" </dev/tty >/dev/tty 2>&1
-if [ $? -ne 0 ]
-then
-  print_abort 'Error writing source image to target device...'
+if write_segments "${image_file}" "${target_device}" "${file_size}"
+then :
+else
+  print_abort "Writing process failed with code \"$?\"..."
   exit 1
 fi
 
 printf '\n' >&2
 printf ' > INFO:\n' >&2
 printf '   - Verifying...\n' >&2
-printf '\n' >&2
 
 # Make sure the data has been written to disk.
 sync
 
-# Prepare arguments for verification.
-set -- \
-  "if=${target_device}" \
-  "bs=${chunk_size}" \
-  "count=${chunk_count}" \
-  iflag=fullblock \
-  status=progress
-
-result=$("${dd_cmd}" "$@" </dev/tty 2>/dev/tty | get_sha256sum -)
-if [ $? -ne 0 ] || [ "X${result}" != "X${checksum}" ]
+# Calculate checksum of the written data
+if result=$(write_segments "${target_device}" '-' "${file_size}" 2>/dev/null | get_sha256sum - 2>/dev/null)
 then
-  print_abort "Verification failed: \"${result}\" does not match \"${checksum}\"..."
+  printf '   - Expected: "%s"\n' "${checksum}" >&2
+  printf '   - Returned: "%s"\n' "${result}" >&2
+  if [ "/${result}" = "/${checksum}" ]
+  then
+    printf '   - Success!\n' >&2
+  else
+    printf '   - Failure...\n' >&2
+    exit 1
+  fi
+else
+  print_abort "Checksum of written data could not be calculated..."
   exit 1
 fi
 
