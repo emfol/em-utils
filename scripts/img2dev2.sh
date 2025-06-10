@@ -157,14 +157,23 @@ size_to_segments() {
     fi
     for block in $((4 * 1024 * 1024)) $((1024 * 1024)) $((4 * 1024)) 512 1
     do
-      if ! remainder=$(($size % $block))
-      then exit 2
+      if remainder=$(expr "${size}" '%' "${block}")
+      then :
+      else if [ $? -gt 1 ]
+        then exit 2
+        fi
       fi
-      if ! segment=$(($size - $remainder))
-      then exit 3
+      if segment=$(expr "${size}" '-' "${remainder}")
+      then :
+      else if [ $? -gt 1 ]
+        then exit 3
+        fi
       fi
-      if ! count=$(($segment / $block))
-      then exit 4
+      if count=$(expr "${segment}" '/' "${block}")
+      then :
+      else if [ $? -gt 1 ]
+        then exit 4
+        fi
       fi
       if [ "${count}" -gt 0 ]
       then printf '%d %d\n' "${block}" "${count}"
@@ -236,14 +245,17 @@ write_segments() {
       fi
     fi
     # Check if `sync` command is available
-    use_sync=$(command -v sync 2>/dev/null) :
+    use_sync=$(command -v sync) :
     size_to_segments "${size}" | (
       unset -v IFS
       while read -r block count unused
       do
-        printf ' > Writing segment with %d blocks of %d bytes...\n\n' "${count}" "${block}" >&2
-        if ! dd bs="${block}" count="${count}" conv=sync <&3 >&4
+        # Printing with the "%d" placeholder might catch any integer conversion issues...
+        if ! printf ' > Writing segment with %d blocks of %d bytes...\n\n' "${count}" "${block}" >&2
         then exit 5
+        fi
+        if ! dd bs="${block}" count="${count}" conv=sync <&3 >&4
+        then exit 6
         fi
         if [ -n "${use_sync}" ]
         then sync
@@ -367,7 +379,11 @@ printf '   - The payload will be split into the following segments:\n' >&2
 size_to_segments "${file_size}" | (
   while read -r block count unused
   do
-    printf '     - %d chunk(s) of %d byte(s);\n' "${count}" "${block}" >&2
+    if ! printf '     - %d chunk(s) of %d byte(s);\n' "${count}" "${block}" >&2
+    then
+      print_abort 'Error calculating payload segments...'
+      exit 1
+    fi
   done
 )
 
@@ -451,7 +467,7 @@ then
     exit 1
   fi
 else
-  print_abort "Checksum of written data could not be calculated..."
+  print_abort 'Checksum of written data could not be calculated...'
   exit 1
 fi
 
