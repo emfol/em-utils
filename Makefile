@@ -1,5 +1,5 @@
 CFLAGS := -std=c89 -pedantic -Wall -O2 -g -D_XOPEN_SOURCE=600
-BINARIES := bin/args bin/bcs bin/starts_with
+BINARIES := bin/args bin/bcs bin/starts_with bin/sysrq
 
 $(shell test ! -e ./bin && mkdir -p bin)
 
@@ -14,6 +14,9 @@ bin/bcs: src/bcs.c
 	cc $(CFLAGS) -o $@ $<
 
 bin/starts_with: src/starts_with.c
+	cc $(CFLAGS) -o $@ $<
+
+bin/sysrq: src/sysrq.c
 	cc $(CFLAGS) -o $@ $<
 
 test: $(BINARIES)
