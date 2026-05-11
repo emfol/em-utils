@@ -124,7 +124,7 @@ static void parse_sysrq_value(long int value) {
   static struct sysrq_mask_table_entry {
     int mask;
     const char *description;
-  } *entry, sysrq_mask_table[] = {
+  } sysrq_mask_table[] = {
     { 0x002, "Enable control of console logging level" },
     { 0x004, "Enable control of keyboard (SAK, unraw)" },
     { 0x008, "Enable debugging dumps of processes etc." },
@@ -134,8 +134,9 @@ static void parse_sysrq_value(long int value) {
     { 0x080, "Allow reboot/poweroff" },
     { 0x100, "Allow nicing of all RT tasks" },
   };
+  struct sysrq_mask_table_entry *entry;
   const char *flag;
-  register long int mask;
+  long int mask;
   int i;
   fprintf(
     stdout,
