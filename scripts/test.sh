@@ -88,3 +88,12 @@ if ! bin/starts_with Emax Ema
 then echo OK
 else echo FAIL
 fi
+
+if output=$(bin/cstr2bin -r '\x0f\x01' '\x0B\x07')
+then
+  if [ "${output}" = "$(printf '%s\n' '\x80\xf0' '\xe0\xd0')" ]
+  then echo OK
+  else echo FAIL
+  fi
+else echo FAIL
+fi
