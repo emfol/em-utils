@@ -29,4 +29,4 @@ test: $(BINARIES)
 	./scripts/test.sh
 
 clean:
-	rm -rf $(BINARIES)
+	rm -rf $(BINARIES) bin/*.o
