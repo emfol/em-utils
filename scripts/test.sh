@@ -38,3 +38,53 @@ test "${output}" = "4194304 $((4096 * 8192))" && echo OK || echo FAIL
 output=$(bcs -v -b 2047 "${f4kib_block}" 2>/dev/null)
 test $? -ne 0 && echo OK || echo FAIL
 test -z "${output}" && echo OK || echo FAIL
+
+if ! bin/starts_with em ''
+then echo OK
+else echo FAIL
+fi
+
+if bin/starts_with em ema
+then echo OK
+else echo FAIL
+fi
+
+if ! bin/starts_with em Ema
+then echo OK
+else echo FAIL
+fi
+
+if bin/starts_with '' Ema
+then echo OK
+else echo FAIL
+fi
+
+if ! bin/starts_with a Ema
+then echo OK
+else echo FAIL
+fi
+
+if ! bin/starts_with e Ema
+then echo OK
+else echo FAIL
+fi
+
+if bin/starts_with 'E' Ema
+then echo OK
+else echo FAIL
+fi
+
+if bin/starts_with 'Ema' Ema
+then echo OK
+else echo FAIL
+fi
+
+if bin/starts_with Ema Ema
+then echo OK
+else echo FAIL
+fi
+
+if ! bin/starts_with Emax Ema
+then echo OK
+else echo FAIL
+fi
